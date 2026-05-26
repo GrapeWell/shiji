@@ -105,12 +105,6 @@ function RootLayoutNav() {
           }}
         />
 
-        <Stack.Screen
-          name="ledger"
-          options={{
-            headerShown: false,
-          }}
-        />
       </Stack>
     </ThemeProvider>
   )

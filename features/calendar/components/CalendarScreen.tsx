@@ -1,4 +1,5 @@
 import type { Category, ExpenseRecord, WorkRecord } from 'types'
+import { getHolidayCellInfo } from 'constants/holiday'
 import dayjs from 'dayjs'
 import { useAtom, useAtomValue } from 'jotai'
 import { useMemo, useState } from 'react'
@@ -22,7 +23,20 @@ interface DayCellData {
   isCurrentMonth: boolean
   isToday: boolean
   hasWork: boolean
+  workHours: number
+  holidayLabel: string
+  holidayName: string
+  holidayShowName: boolean
+  holidayType: 'public_holiday' | 'transfer_workday' | null
   expenseColors: string[]
+}
+
+function formatWorkHours(hours: number): string {
+  if (hours <= 0)
+    return ''
+
+  const rounded = Math.round(hours * 10) / 10
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}h`
 }
 
 function buildMonthGrid(
@@ -30,6 +44,7 @@ function buildMonthGrid(
   month: number,
   weekStart: 0 | 1,
   workDates: Set<string>,
+  workHoursByDate: Map<string, number>,
   expenseByDate: Map<string, string[]>,
 ): DayCellData[][] {
   const firstDay = dayjs(`${year}-${String(month).padStart(2, '0')}-01`)
@@ -53,6 +68,11 @@ function buildMonthGrid(
         isCurrentMonth: false,
         isToday: false,
         hasWork: false,
+        workHours: 0,
+        holidayLabel: '',
+        holidayName: '',
+        holidayShowName: false,
+        holidayType: null,
         expenseColors: [],
       })
       continue
@@ -60,6 +80,7 @@ function buildMonthGrid(
 
     const day = i - offset + 1
     const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const holiday = getHolidayCellInfo(date)
 
     cells.push({
       date,
@@ -67,6 +88,11 @@ function buildMonthGrid(
       isCurrentMonth: true,
       isToday: date === today,
       hasWork: workDates.has(date),
+      workHours: workHoursByDate.get(date) ?? 0,
+      holidayLabel: holiday?.label ?? '',
+      holidayName: holiday?.name ?? '',
+      holidayShowName: holiday?.showName ?? false,
+      holidayType: holiday?.type ?? null,
       expenseColors: expenseByDate.get(date) ?? [],
     })
   }
@@ -98,13 +124,15 @@ export default function CalendarScreen() {
     return map
   }, [categories])
 
-  const { workDates, expenseByDate } = useMemo(() => {
+  const { workDates, workHoursByDate, expenseByDate } = useMemo(() => {
     const wd = new Set<string>()
+    const wh = new Map<string, number>()
     const em = new Map<string, string[]>()
 
     const wr = Array.isArray(workRecords) ? workRecords : []
     for (const r of wr) {
       wd.add(r.date)
+      wh.set(r.date, (wh.get(r.date) ?? 0) + r.durationHours)
     }
 
     const er = Array.isArray(expenseRecords) ? expenseRecords : []
@@ -118,7 +146,7 @@ export default function CalendarScreen() {
       em.set(r.date, colors)
     }
 
-    return { workDates: wd, expenseByDate: em }
+    return { workDates: wd, workHoursByDate: wh, expenseByDate: em }
   }, [workRecords, expenseRecords, categoryMap])
 
   const weeks = useMemo(
@@ -127,9 +155,10 @@ export default function CalendarScreen() {
       currentMonth.month() + 1,
       settings.weekStart,
       workDates,
+      workHoursByDate,
       expenseByDate,
     ),
-    [currentMonth, settings.weekStart, workDates, expenseByDate],
+    [currentMonth, settings.weekStart, workDates, workHoursByDate, expenseByDate],
   )
 
   const weekdayLabels = WEEKDAY_LABELS[settings.weekStart]
@@ -261,7 +290,7 @@ export default function CalendarScreen() {
                     style={{ flex: 1 }}
                   >
                     <YStack
-                      height={46}
+                      height={60}
                       items="center"
                       justify="center"
                       rounded="$3"
@@ -273,48 +302,84 @@ export default function CalendarScreen() {
                     >
                       {cell.day > 0 && (
                         <>
-                          <Text
-                            fontSize={cell.isToday ? 16 : 15}
-                            fontWeight={cell.isToday ? '700' : '400'}
-                            color={
-                              isSelected
-                                ? '$blue10'
-                                : cell.isToday
-                                  ? '$blue10'
-                                  : '$color'
-                            }
-                          >
-                            {cell.day}
-                          </Text>
-                          {(cell.hasWork || cell.expenseColors.length > 0) && (
-                            <XStack gap={3}>
-                              {cell.hasWork && (
-                                <View
-                                  width={6}
-                                  height={6}
-                                  rounded="$10"
-                                  bg="$blue9"
-                                />
-                              )}
-                              {cell.expenseColors.slice(0, 3).map((color, i) => (
-                                <RNView
-                                  key={i}
-                                  style={{
-                                    width: 6,
-                                    height: 6,
-                                    borderRadius: 3,
-                                    backgroundColor: color,
-                                  }}
-                                />
-                              ))}
-                              {cell.expenseColors.length > 3 && (
-                                <Text fontSize={8} color="$color10">
-                                  +
-                                  {cell.expenseColors.length - 3}
+                          <YStack items="center" gap={1.5}>
+                            <XStack items="center" gap={2}>
+                              {cell.holidayLabel && (
+                                <Text
+                                  fontSize={10}
+                                  fontWeight="700"
+                                  lineHeight={12}
+                                  color={cell.holidayType === 'transfer_workday' ? '#ef6c00' : '#d32f2f'}
+                                >
+                                  {cell.holidayLabel}
                                 </Text>
                               )}
+                              {!cell.holidayLabel && (
+                                <View width={10} />
+                              )}
+                              <Text
+                                fontSize={cell.isToday ? 16 : 15}
+                                fontWeight={cell.isToday ? '700' : '400'}
+                                color={
+                                  isSelected
+                                    ? '$blue10'
+                                    : cell.isToday
+                                      ? '$blue10'
+                                      : '$color'
+                                }
+                              >
+                                {cell.day}
+                              </Text>
+                              {cell.holidayShowName && cell.holidayName && (
+                                <YStack items="center" gap={0}>
+                                  {cell.holidayName.split('').map((char, index) => (
+                                    <Text
+                                      key={`${cell.date}-${index}`}
+                                      fontSize={8}
+                                      lineHeight={9}
+                                      color="$color10"
+                                    >
+                                      {char}
+                                    </Text>
+                                  ))}
+                                </YStack>
+                              )}
+                              {!cell.holidayName && (
+                                <View width={10} />
+                              )}
                             </XStack>
-                          )}
+                            {cell.hasWork && (
+                              <Text
+                                fontSize={10}
+                                fontWeight="600"
+                                color={isSelected ? '$blue10' : '$blue9'}
+                                lineHeight={12}
+                              >
+                                {formatWorkHours(cell.workHours)}
+                              </Text>
+                            )}
+                            {cell.expenseColors.length > 0 && (
+                              <XStack gap={3} items="center">
+                                {cell.expenseColors.slice(0, 3).map((color, i) => (
+                                  <RNView
+                                    key={i}
+                                    style={{
+                                      width: 6,
+                                      height: 6,
+                                      borderRadius: 3,
+                                      backgroundColor: color,
+                                    }}
+                                  />
+                                ))}
+                                {cell.expenseColors.length > 3 && (
+                                  <Text fontSize={8} color="$color10">
+                                    +
+                                    {cell.expenseColors.length - 3}
+                                  </Text>
+                                )}
+                              </XStack>
+                            )}
+                          </YStack>
                         </>
                       )}
                     </YStack>
